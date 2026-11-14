@@ -11,7 +11,8 @@ A Defender-style shooter in Bash. You are a small orange tabby cat.
 - The street (cardboard boxes, trash cans) is the mountain range.
 - **Pigeons** home in on the cat. A hit costs a life (then you blink, safe, for 2 seconds). Pop them with a biscuit for 250.
 - **Rats** run the street on a pattern, jump, turn around and bite if you fly low. Biscuit them for 200. They follow patterns you can edit (see below).
-- **Radar:** the strip along the top is the whole wrapping world. Orange bar = you, pink = kitten, flashing red = a kitten being carried off, grey = mice, brown = rats, blue = pigeons, and the bright bracket is what your screen sees. Turn it off with `radar = off` in `settings.conf`.
+- **Radar:** the strip along the top is the whole wrapping world. Orange square = you (the dim line shows where you are), pink = kitten, flashing red = a kitten being carried off, grey = mice, brown = rats, blue = pigeons, and the bright bracket is what your screen sees. Dots sit at the height of what they are. Turn it off with `radar = off` in `settings.conf`.
+- **Sound:** pops, bites, rescues and the spazz bomb use macOS system sounds. Press M in the game or on the title screen, or set `sound = off` in `settings.conf`.
 - More to come.
 
 ## Settings
@@ -23,7 +24,7 @@ A Defender-style shooter in Bash. You are a small orange tabby cat.
 ```
 bin/meowtron          # or bin/cat-defender
 ```
-Arrows or WASD fly. Space throws a biscuit. X spazz-out. q quits.
+Arrows or WASD fly. Space throws a biscuit. X spazz-out. M toggles sound. q quits.
 Needs Bash 4+ and a 120x30 UTF-8 colour terminal. See docs/ENVIRONMENT.md. Check your terminal: `tools/termcheck.sh`
 
 ## Develop

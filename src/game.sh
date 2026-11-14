@@ -20,7 +20,7 @@ CH=30            # screen height in terminal rows
 H=$((CH * 2))    # screen height in catxels (60)
 WW=1200          # world width in catxels (wraps around)
 GROUND=54        # first catxel row of the sidewalk
-TOP=9            # top of the play area (rows above it belong to the radar)
+TOP=14           # top of the play area (rows above it belong to the radar)
 SKY=17
 FRAME_US=50000   # 20 frames per second
 
@@ -105,7 +105,28 @@ blit() {  # sprite x y
 # Signed shortest distance a-b around the wrapping world, into WDV.
 wd() { WDV=$(( ($1 - $2) % WW + WW + WW / 2 )); WDV=$(( WDV % WW - WW / 2 )); }
 
-ev() { [[ -n ${TRACE:-} ]] && echo "[f$frame] $*" >&2; return 0; }
+SOUND=0; SFX_LAST=0
+# Sound effects: macOS system sounds through afplay (anything else gets the terminal bell for the big moments).
+# Only in real play (never in headless tests). Toggle with M, or `sound = on|off` in settings.conf.
+sfx() {  # name [volume]
+  local f=/System/Library/Sounds/$1.aiff now=${EPOCHREALTIME/./}
+  ((now - SFX_LAST < 60000)) && return 0          # no more than ~16 sounds a second
+  SFX_LAST=$now
+  if [[ -r $f ]] && command -v afplay >/dev/null 2>&1; then { afplay -v "${2:-0.5}" "$f" >/dev/null 2>&1 & } 2>/dev/null
+  else case $1 in Basso|Sosumi|Submarine|Hero) printf '\a' ;; esac; fi
+}
+sfx_for() {
+  case $1 in
+    "mouse popped"|"mouse spazzed"|"bird popped"|"rat popped") sfx Pop ;;
+    "life lost (0 left)") sfx Sosumi 0.7 ;;
+    "life lost"*) sfx Basso 0.7 ;;
+    "kitten "*" caught") sfx Glass ;;
+    "kitten "*" landed safely") sfx Tink 0.4 ;;
+    "SPAZZ-OUT") sfx Submarine 0.7 ;;
+    "bonus life") sfx Hero 0.6 ;;
+  esac
+}
+ev() { ((SOUND)) && [[ $MODE == play ]] && sfx_for "$*"; [[ -n ${TRACE:-} ]] && echo "[f$frame] $*" >&2; return 0; }
 
 # ---- settings.conf: "key = value" lines, [easy]/[medium]/[hard] sections, # comments ----
 declare -A CFG
@@ -148,6 +169,7 @@ apply_settings() {
   cfgn rat_step 10;         ((CV < 2)) && CV=2; RAT_STEP=$CV
   cfgn jump_height 14;      JUMP_H=$CV
   d=${CFG[.radar]:-on}; d=${d,,}; RADAR=1; [[ $d == off || $d == 0 || $d == no ]] && RADAR=0
+  d=${CFG[.sound]:-on}; d=${d,,}; SOUND=1; [[ $d == off || $d == 0 || $d == no ]] && SOUND=0
   ((SPAWN_EVERY < 1)) && SPAWN_EVERY=1; ((BIRD_EVERY < 1)) && BIRD_EVERY=1; ((RAT_EVERY < 1)) && RAT_EVERY=1
   PATS=()
   while [[ -n ${CFG[.pattern$n]:-} ]]; do
@@ -158,16 +180,17 @@ apply_settings() {
   ((${#PATS[@]})) || PATS=(RRRJJ RJJRR RRTRRJJT RRHJRRHJ)
   NPAT=${#PATS[@]}
 }
-write_difficulty() {  # remember the title-screen choice in settings.conf
+write_setting() {  # key value: remember a choice in settings.conf (keeps your comments and layout)
   local f=${SETTINGS_FILE:-$ROOT/settings.conf} line out='' done=0
   [[ -w $f ]] || return 0
   while IFS= read -r line || [[ -n $line ]]; do
-    if ((!done)) && [[ $line =~ ^[[:space:]]*difficulty[[:space:]]*= ]]; then
-      line="difficulty = $DIFF        # easy | medium | hard"; done=1
+    if ((!done)) && [[ $line =~ ^[[:space:]]*$1[[:space:]]*= ]]; then
+      line="$1 = $2"; [[ $1 == difficulty ]] && line+="        # easy | medium | hard"; [[ $1 == sound ]] && line+="                 # on | off"; done=1
     fi
     out+=$line$'\n'
   done < "$f"
   ((done)) && printf '%s' "$out" > "$f"
+  return 0
 }
 
 # ---- world: cardboard boxes, stacks and trash cans along the street ----
@@ -236,7 +259,7 @@ cool=0; fire=0
 # ---- mice (they take kittens up on balloons)
 MAXMICE=3                          # on the street at once
 SPAWN_EVERY=${SPAWN_EVERY:-60}     # frames between new mice (if a free kitten exists)
-RISE_EVERY=2                       # a carrying mouse rises 1 catxel every N frames
+RISE_EVERY=3                       # a carrying mouse rises 1 catxel every N frames
 SAFE_FALL=22                       # a kitten dropped from higher than this is lost unless caught
 declare -a MX MY MS MK MD          # x, y, state (0 running, 1 carrying), kitten index, facing
 
@@ -353,6 +376,7 @@ handle_key() {
     $'\e[B'|s) catY8=$((catY8 + 16)); frozen=1 ;;
     ' ') fire=1 ;;
     x|X|b|B) bomb=1 ;;
+    m|M) SOUND=$((1 - SOUND)); write_setting sound "$( ((SOUND)) && echo on || echo off )"; ((SOUND)) && sfx Pop ;;
     q|Q) quit=1 ;;
   esac
 }
@@ -547,31 +571,34 @@ RDW=80; RDX0=$(((W - RDW) / 2)); RADAR=1
 bake_radar() {   # the static part: panel, frame and the street furniture
   ((RADAR)) || return 0
   local x y i
-  for ((y = 2; y <= 7; y++)); do
+  for ((y = 2; y <= 11; y++)); do
     for ((x = RDX0 - 1; x <= RDX0 + RDW; x++)); do
-      if ((y == 2 || y == 7 || x == RDX0 - 1 || x == RDX0 + RDW)); then sky[y * W + x]=238; else sky[y * W + x]=233; fi
+      if ((y == 2 || y == 11 || x == RDX0 - 1 || x == RDX0 + RDW)); then sky[y * W + x]=238; else sky[y * W + x]=233; fi
     done
   done
-  for ((i = 0; i < ${#OX[@]}; i++)); do x=$((RDX0 + OX[i] * RDW / WW)); sky[6 * W + x]=240; done
+  for ((i = 0; i < ${#OX[@]}; i++)); do x=$((RDX0 + OX[i] * RDW / WW)); sky[10 * W + x]=240; done
 }
-rplot() {  # world-x colour: a 1x2 dot in the middle of the strip
-  local x=$((RDX0 + ((($1 % WW) + WW) % WW) * RDW / WW))
-  fb[4 * W + x]=$2; fb[5 * W + x]=$2
+rplot() {  # world-x, world-y, colour: a 1x2 dot at the matching height in the strip
+  local x=$((RDX0 + ((($1 % WW) + WW) % WW) * RDW / WW)) y=$((3 + ($2 - TOP) * 7 / (GROUND - TOP)))
+  ((y < 3)) && y=3; ((y > 9)) && y=9
+  fb[y * W + x]=$3; fb[(y + 1) * W + x]=$3
 }
 radar() {
   ((RADAR)) || return 0
-  local i k x v c cx=$((px8 >> 3)) blink=$((frame / 3 % 2))
-  rd[1]=1; rd[2]=1; rd[3]=1
+  local i k x y v c cx=$((px8 >> 3)) blink=$((frame / 3 % 2))
+  for ((k = 1; k <= 5; k++)); do rd[k]=1; done
   v=$(( ((cam8 >> 3) % WW + WW) % WW * RDW / WW ))      # your view, as a bright bracket
-  for ((k = 0; k <= W * RDW / WW; k++)); do x=$((RDX0 + (v + k) % RDW)); fb[2 * W + x]=252; fb[7 * W + x]=252; done
-  for ((i = 0; i < ${#MX[@]}; i++)); do c=250; ((MS[i] == 1 && blink)) && c=231; rplot "${MX[i]}" "$c"; done
-  for ((i = 0; i < ${#RX[@]}; i++)); do rplot "${RX[i]}" 137; done
-  for ((i = 0; i < ${#BX[@]}; i++)); do rplot "${BX[i]}" 117; done
+  for ((k = 0; k <= W * RDW / WW; k++)); do x=$((RDX0 + (v + k) % RDW)); fb[2 * W + x]=252; fb[11 * W + x]=252; done
+  x=$((RDX0 + cx * RDW / WW)); for ((k = 3; k <= 10; k++)); do fb[k * W + x]=94; done   # a dim line down from you
+  for ((i = 0; i < ${#MX[@]}; i++)); do c=250; ((MS[i] == 1 && blink)) && c=231; rplot "${MX[i]}" "${MY[i]}" "$c"; done
+  for ((i = 0; i < ${#RX[@]}; i++)); do rplot "${RX[i]}" $((RAT_G - RO[i])) 137; done
+  for ((i = 0; i < ${#BX[@]}; i++)); do rplot "${BX[i]}" "${BY[i]}" 117; done
   for ((i = 0; i < NK; i++)); do
     case ${KS[i]} in 0) c=211;; 1) c=196; ((blink)) && c=203;; 2) c=226;; *) continue;; esac
-    rplot "${KX[i]}" "$c"
+    rplot "${KX[i]}" "${KY[i]}" "$c"
   done
-  x=$((RDX0 + cx * RDW / WW)); for ((k = 3; k <= 6; k++)); do fb[k * W + x]=208; fb[k * W + x + 1]=208; done   # the cat
+  y=$((3 + (catY - TOP) * 7 / (GROUND - TOP))); ((y < 3)) && y=3; ((y > 9)) && y=9   # the cat, at its height
+  fb[y * W + x]=208; fb[y * W + x + 1]=208; fb[(y + 1) * W + x]=208; fb[(y + 1) * W + x + 1]=208
 }
 
 compose() {
@@ -671,7 +698,7 @@ render() {
     elif ((alive == 0)); then
       printf -v hud ' MEOWTRON   SCORE %6d   ALL THE KITTENS ARE GONE...   press q ' "$SCORE"
     else
-      printf -v hud ' MEOWTRON [%s]  SCORE %6d  LIVES %d  SPAZZ %d  KITTENS %d/%d  SAVED %d  SPACE biscuit  X spazz  q quit' "${DIFF^^}" "$SCORE" "$LIVES" "$BOMBS" "$alive" "$NK" "$RESCUED"
+      printf -v hud ' MEOWTRON [%s]  SCORE %6d  LIVES %d  SPAZZ %d  KITTENS %d/%d  SAVED %d  SPACE throw  X spazz  M sound %s  q quit' "${DIFF^^}" "$SCORE" "$LIVES" "$BOMBS" "$alive" "$NK" "$RESCUED" "$( ((SOUND)) && echo on || echo off )"
     fi
     printf -v hud "%-${W}s" "$hud"
     out+=$hud
@@ -714,6 +741,7 @@ title_screen() {
     done
     out+=$'\e['$((ORIGY + 14))';'$((ORIGX + W / 2 - 17))'H'$opt
     at 16 $'\e[38;5;245m' "${blurb[idx]}"
+    at 18 $'\e[38;5;252m' "M  sound: $( ((SOUND)) && echo ON || echo off )"
     at 20 $'\e[38;5;252m' "LEFT / RIGHT choose     ENTER play     Q quit"
     at 22 $'\e[38;5;240m' "rat patterns and every number live in settings.conf"
     printf '%s' "$out"
@@ -724,10 +752,11 @@ title_screen() {
       $'\e[D'|a|h) idx=$(( (idx + 2) % 3 )) ;;
       1|2|3) idx=$((k - 1)) ;;
       ''|$'\n'|' ') break ;;
+      m|M) handle_key m ;;
       q|Q) quit=1; return ;;
     esac
   done
-  DIFFICULTY=${names[idx]}; apply_settings; write_difficulty
+  DIFFICULTY=${names[idx]}; apply_settings; write_setting difficulty "$DIFF"
   printf '\e[0m\e[2J'
 }
 
