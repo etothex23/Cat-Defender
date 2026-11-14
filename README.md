@@ -1,7 +1,7 @@
 # MEOWTRON
 
 A Defender-style shooter in Bash. You are a small orange tabby cat.
-(Project folder is `Cat-Defender`; the game's name is Meowtron. Named by the crew: the human, C-Dog (Claude) and, OOR, G-Money (Gemini) is still welcome to pitch a better one.)
+(The repo and folder are `Cat-Defender`; the game's name is Meowtron.)
 
 - **Cat swipe** (space) flings a biscuit with a speed trail. It pierces everything in its path.
 - **Spazz-out** (X) is your smart bomb: the cat freaks out and pops every mouse on screen. You get 3.
@@ -31,3 +31,7 @@ Needs Bash 4+ and a UTF-8 256-colour terminal. 120x30 is ideal; it shrinks to fi
 - `tests/run_checks.sh`: syntax, speed and a "no ghost pixels" replay test.
 - Headless play for testing: `AUTO=lazy TRACE=1 bash src/game.sh --bench 2000` (see the header of src/game.sh).
 - Sprites are text files in `sprites/` (palette in `sprites/palette.txt`). `tools/spr_map.py` draws a labeled cell map.
+
+## Credits
+Designed with the human; written with **Claude** (Anthropic's AI, aka **C-Dog**) in Claude Code.
+Licensed under the MIT License (see `LICENSE`): use it, change it, share it.
