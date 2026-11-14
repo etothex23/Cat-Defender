@@ -42,9 +42,9 @@ def seq(*parts):
 
 def silence(d): return [0.0] * int(SR * d)
 
-def save(name, samples, sub=''):
+def save(name, samples, sub='', normalise=False):
     peak = max(abs(s) for s in samples) or 1
-    gain = min(1.0, 0.92 / peak)
+    gain = 0.92 / peak if normalise else min(1.0, 0.92 / peak)
     d = os.path.join(OUT, sub); os.makedirs(d, exist_ok=True)
     with wave.open(os.path.join(d, name + '.wav'), 'wb') as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
@@ -70,12 +70,56 @@ sounds = {
   'over':    (seq(*[note(f, f * 0.98, 0.17, 'square', 0.4, 0.5, 1.2) for f in (392, 330, 262)], note(196, 150, 0.6, 'square', 0.4, 0.5, 2.5, vib=0.02)), None),
   'respawn': (seq(note(200, 900, 0.22, 'tri', 0.5, decay=0.8), note(1800, 1800, 0.05, 'sine', 0.4, decay=4), note(2400, 2400, 0.07, 'sine', 0.3, decay=4)), None),
 }
+# ---- the meow: a sawtooth "voice" through three moving resonances (formants), so it goes mee-ow
+def interp(pts, t):
+    for (t0, v0), (t1, v1) in zip(pts, pts[1:]):
+        if t <= t1:
+            u = (t - t0) / (t1 - t0) if t1 > t0 else 1.0
+            u = u * u * (3 - 2 * u)
+            return v0 + (v1 - v0) * u
+    return pts[-1][1]
+
+def formant_meow(dur, f0, f1, f2, vib=0.0, breath=0.05, trill=0.0, f3=2900):
+    n = int(SR * dur); ph = 0.0
+    st = [[0.0, 0.0] for _ in range(3)]; gains = (1.0, 0.7, 0.3); bws = (90, 140, 220)
+    out = []
+    for i in range(n):
+        t = i / n
+        pitch = interp(f0, t) * (1 + vib * t * math.sin(2 * math.pi * 6 * i / SR))
+        ph += pitch / SR
+        src = (2 * (ph % 1.0) - 1) + 0.25 * random.uniform(-1, 1) * breath * 8
+        if trill and t < 0.3: src *= 1 + trill * math.sin(2 * math.pi * 26 * i / SR)
+        y = 0.0
+        for k, fc in enumerate((interp(f1, t), interp(f2, t), f3)):
+            r = math.exp(-math.pi * bws[k] / SR)
+            a1 = 2 * r * math.cos(2 * math.pi * fc / SR); a2 = -r * r
+            v = (1 - r) * src + a1 * st[k][0] + a2 * st[k][1]
+            st[k][1] = st[k][0]; st[k][0] = v
+            y += gains[k] * v
+        env = min(1.0, i / (SR * 0.02)) * (math.sin(math.pi * min(1.0, t * 1.05)) ** 0.5) * (1 - 0.3 * t)
+        out.append(y * env)
+    return out
+
+MEOWS = {
+  'meow_1_classic': formant_meow(0.55, [(0, 380), (.3, 720), (1, 430)], [(0, 330), (.35, 800), (1, 420)], [(0, 2400), (.35, 1500), (1, 950)]),
+  'meow_2_kitten':  formant_meow(0.32, [(0, 650), (.4, 1050), (1, 800)], [(0, 400), (.4, 850), (1, 550)], [(0, 2600), (.4, 1900), (1, 1500)], breath=0.08),
+  'meow_3_mrrow':   formant_meow(0.62, [(0, 300), (.35, 560), (1, 360)], [(0, 450), (.4, 750), (1, 380)], [(0, 1300), (.4, 1400), (1, 800)], trill=0.6),
+  'meow_4_demand':  formant_meow(0.85, [(0, 420), (.25, 820), (.55, 780), (1, 380)], [(0, 350), (.3, 900), (.6, 800), (1, 400)], [(0, 2200), (.3, 1500), (.6, 1300), (1, 900)], vib=0.03),
+}
+
 # a synthetic meow: pitch arcs up then down, vibrato, a little breath
 meow = mix(note(420, 900, 0.18, 'saw', 0.35, decay=0.8, vib=0.02) + note(900, 480, 0.3, 'saw', 0.35, decay=2.5, vib=0.03),
            noise(0.5, 0.06, 2, 0.15))
 sounds['rescue'] = (sounds['rescue'][0], meow)
 
+# The human's picks (2026-11-14): the B version of these is the one the game plays.
+PICKS = {'rescue': 'b', 'throw': 'b', 'land': 'b'}
+
 for name, (a, b) in sounds.items():
-    save(name, a)
-    if b is not None: save(name + '_b', b, 'alt')
-print('wrote', len(os.listdir(OUT)) - 1, 'sounds to', os.path.normpath(OUT))
+    if b is not None and PICKS.get(name) == 'b':
+        save(name, b); save(name + '_a', a, 'alt')      # chosen B is the default; the old A goes to alt/
+    else:
+        save(name, a)
+        if b is not None: save(name + '_b', b, 'alt')
+for name, smp in MEOWS.items(): save(name, smp, 'alt', normalise=True)
+print('wrote sounds to', os.path.normpath(OUT))
