@@ -1,0 +1,12 @@
+#!/bin/sh
+# Launcher: find a Bash >= 4 and run the game with it.
+DIR=$(cd "$(dirname "$0")/.." && pwd)
+for b in /opt/homebrew/bin/bash /usr/local/bin/bash /usr/bin/env; do
+  [ "$b" = /usr/bin/env ] && b=$(command -v bash)
+  [ -x "$b" ] || continue
+  if "$b" -c '[ "${BASH_VERSINFO[0]}" -ge 4 ]' 2>/dev/null; then
+    exec "$b" "$DIR/src/game.sh" "$@"
+  fi
+done
+echo "Meowtron needs Bash 4 or newer. On macOS: brew install bash" >&2
+exit 1

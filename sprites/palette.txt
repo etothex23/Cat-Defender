@@ -1,0 +1,15 @@
+# char  xterm256  hex
+O 208 #ff8700
+D 166 #d75f00
+W 255 #eeeeee
+K 16  #000000
+P 211 #ff87af
+G 246 #949494
+C 223 #ffd7af
+B 137 #af875f
+T 180 #d7af87
+d 95  #875f5f
+L 250 #bcbcbc
+M 240 #585858
+m 236 #303030
+R 196 #ff0000
