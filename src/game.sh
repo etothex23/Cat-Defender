@@ -20,6 +20,7 @@ CH=30            # screen height in terminal rows
 H=$((CH * 2))    # screen height in catxels (60)
 WW=1200          # world width in catxels (wraps around)
 GROUND=54        # first catxel row of the sidewalk
+TOP=9            # top of the play area (rows above it belong to the radar)
 SKY=17
 FRAME_US=50000   # 20 frames per second
 
@@ -146,6 +147,7 @@ apply_settings() {
   cfgn rat_speed 1;         ((CV < 1)) && CV=1; RAT_SPEED=$CV
   cfgn rat_step 10;         ((CV < 2)) && CV=2; RAT_STEP=$CV
   cfgn jump_height 14;      JUMP_H=$CV
+  d=${CFG[.radar]:-on}; d=${d,,}; RADAR=1; [[ $d == off || $d == 0 || $d == no ]] && RADAR=0
   ((SPAWN_EVERY < 1)) && SPAWN_EVERY=1; ((BIRD_EVERY < 1)) && BIRD_EVERY=1; ((RAT_EVERY < 1)) && RAT_EVERY=1
   PATS=()
   while [[ -n ${CFG[.pattern$n]:-} ]]; do
@@ -304,7 +306,7 @@ declare -a BX BY BD                # x, y, facing
 spawn_bird() {
   ((${#BX[@]} >= MAXBIRDS)) && return
   local x=$(( (px8 >> 3) + (RANDOM % 2 ? W / 2 + 14 : -W / 2 - 20) ))
-  BX+=($(( (x % WW + WW) % WW ))); BY+=($((6 + RANDOM % 14))); BD+=(-1)
+  BX+=($(( (x % WW + WW) % WW ))); BY+=($((TOP + 2 + RANDOM % 12))); BD+=(-1)
   ev "bird spawned"
 }
 
@@ -327,7 +329,7 @@ update_birds() {
     if ((dx > 2)); then x=$(( (x + step) % WW )); d=1; elif ((dx < -2)); then x=$(( (x - step + WW) % WW )); d=-1; fi
     dy=$((catY - y))
     if ((frame % 2 == 0)); then ((dy > 1)) && y=$((y + 1)); ((dy < -1)) && y=$((y - 1)); fi
-    ((y < 3)) && y=3; ((y > GROUND - 8)) && y=$((GROUND - 8))
+    ((y < TOP)) && y=$TOP; ((y > GROUND - 8)) && y=$((GROUND - 8))
     wd "$cx" "$x"; dx=${WDV#-}
     if ((inv == 0 && dx < 8 && y - catY < 5 && catY - y < 5)); then   # it got the cat
       lose_life; inv=$INVULN; ev "bird hit the cat"; continue
@@ -471,7 +473,7 @@ update_mice() {
     else
       ((frame % RISE_EVERY == 0)) && y=$((y - 1))
       KX[k]=$((x + 1)); KY[k]=$(( y + 5 > GROUND - 6 ? GROUND - 6 : y + 5 ))
-      if ((y <= 8)); then KS[k]=3; LOST=$((LOST + 1)); lose_life; ev "kitten $k lost to the sky"; continue; fi
+      if ((y <= TOP + 5)); then KS[k]=3; LOST=$((LOST + 1)); lose_life; ev "kitten $k lost to the sky"; continue; fi
     fi
     nx+=("$x"); ny+=("$y"); ns+=("$s"); nk+=("$k"); nd+=("${MD[i]}")
   done
@@ -515,7 +517,7 @@ update() {
   [[ -n ${TRACEVX:-} ]] && echo "f=$frame vx=$vx" >&2
   px8=$((px8 + vx))
   catY8=$((catY8 + SINK))                  # slow sink
-  ((catY8 < 4 * 8)) && catY8=$((4 * 8))
+  ((catY8 < TOP * 8)) && catY8=$((TOP * 8))
   ((catY8 > (GROUND - 8) * 8)) && catY8=$(((GROUND - 8) * 8))
   catY=$((catY8 >> 3))
   ((cool > 0)) && ((cool--))
@@ -538,6 +540,38 @@ update() {
   cam8=$((cam8 + (tgt - cam8) / 6))
   if ((px8 >= WW * 8)); then px8=$((px8 - WW * 8)); cam8=$((cam8 - WW * 8)); fi
   if ((px8 < 0));       then px8=$((px8 + WW * 8)); cam8=$((cam8 + WW * 8)); fi
+}
+
+# ---- radar: the whole wrapping world as a strip across the top (rows 2-7) ----
+RDW=80; RDX0=$(((W - RDW) / 2)); RADAR=1
+bake_radar() {   # the static part: panel, frame and the street furniture
+  ((RADAR)) || return 0
+  local x y i
+  for ((y = 2; y <= 7; y++)); do
+    for ((x = RDX0 - 1; x <= RDX0 + RDW; x++)); do
+      if ((y == 2 || y == 7 || x == RDX0 - 1 || x == RDX0 + RDW)); then sky[y * W + x]=238; else sky[y * W + x]=233; fi
+    done
+  done
+  for ((i = 0; i < ${#OX[@]}; i++)); do x=$((RDX0 + OX[i] * RDW / WW)); sky[6 * W + x]=240; done
+}
+rplot() {  # world-x colour: a 1x2 dot in the middle of the strip
+  local x=$((RDX0 + ((($1 % WW) + WW) % WW) * RDW / WW))
+  fb[4 * W + x]=$2; fb[5 * W + x]=$2
+}
+radar() {
+  ((RADAR)) || return 0
+  local i k x v c cx=$((px8 >> 3)) blink=$((frame / 3 % 2))
+  rd[1]=1; rd[2]=1; rd[3]=1
+  v=$(( ((cam8 >> 3) % WW + WW) % WW * RDW / WW ))      # your view, as a bright bracket
+  for ((k = 0; k <= W * RDW / WW; k++)); do x=$((RDX0 + (v + k) % RDW)); fb[2 * W + x]=252; fb[7 * W + x]=252; done
+  for ((i = 0; i < ${#MX[@]}; i++)); do c=250; ((MS[i] == 1 && blink)) && c=231; rplot "${MX[i]}" "$c"; done
+  for ((i = 0; i < ${#RX[@]}; i++)); do rplot "${RX[i]}" 137; done
+  for ((i = 0; i < ${#BX[@]}; i++)); do rplot "${BX[i]}" 117; done
+  for ((i = 0; i < NK; i++)); do
+    case ${KS[i]} in 0) c=211;; 1) c=196; ((blink)) && c=203;; 2) c=226;; *) continue;; esac
+    rplot "${KX[i]}" "$c"
+  done
+  x=$((RDX0 + cx * RDW / WW)); for ((k = 3; k <= 6; k++)); do fb[k * W + x]=208; fb[k * W + x + 1]=208; done   # the cat
 }
 
 compose() {
@@ -608,6 +642,7 @@ compose() {
     for ((y = cys - 20; y <= cys + 26; y += 2)); do ((y >= 0 && y < H)) && rd[y >> 1]=1; done
   fi
   ((inv > 0 && frame % 4 < 2)) || blit "$sprite" "$cxs" "$cys"   # blinks while safe after a hit
+  radar
 }
 
 # ---- terminal output: only changed cells, only rows that can change ----
@@ -710,6 +745,7 @@ if [[ $MODE == play ]]; then
   TMPD=$(mktemp -d); mkfifo "$TMPD/f"; exec {sfd}<>"$TMPD/f"
 fi
 
+bake_radar
 t_start=${EPOCHREALTIME/./}
 while ((!quit)); do
   t0=${EPOCHREALTIME/./}

@@ -11,7 +11,8 @@ A Defender-style shooter in Bash. You are a small orange tabby cat.
 - The street (cardboard boxes, trash cans) is the mountain range.
 - **Pigeons** home in on the cat. A hit costs a life (then you blink, safe, for 2 seconds). Pop them with a biscuit for 250.
 - **Rats** run the street on a pattern, jump, turn around and bite if you fly low. Biscuit them for 200. They follow patterns you can edit (see below).
-- The radar and more are still to come.
+- **Radar:** the strip along the top is the whole wrapping world. Orange bar = you, pink = kitten, flashing red = a kitten being carried off, grey = mice, brown = rats, blue = pigeons, and the bright bracket is what your screen sees. Turn it off with `radar = off` in `settings.conf`.
+- More to come.
 
 ## Settings
 `settings.conf` is plain text: edit it in any editor. The title screen (left/right, Enter) picks **easy / medium / hard** and saves it there.
