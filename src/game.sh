@@ -144,6 +144,7 @@ sfx_for() {
     "life lost"*kitten) sfx lost ;;
     "kitten "*" caught") sfx rescue ;;
     "kitten "*" landed safely") sfx land 0.5 ;;
+    "kitten "*" delivered") sfx bonus 0.6 ;;
     "SPAZZ-OUT") sfx spazz ;;
     "bonus life") sfx bonus ;;
     "respawn") sfx respawn ;;
@@ -230,7 +231,8 @@ gen_world() {
   done
 }
 
-# ---- kittens (the people to rescue). state: 0 on ground, 1 carried, 2 falling, 3 gone ----
+# ---- kittens (the people to rescue). state: 0 on ground, 1 carried by a mouse, 2 falling, 3 gone, 4 carried by the cat ----
+CARRY=-1                           # index of the kitten the cat is carrying, or -1
 NK=6
 declare -a KX KY KS KV KF
 gen_kittens() {
@@ -262,7 +264,7 @@ lose_life() {  # bite = the cat dies and reappears; anything else (a lost kitten
   ((LIVES > 0)) && LIVES=$((LIVES - 1))
   ev "life lost ($LIVES left) $why"
   if [[ $why == bite ]]; then
-    DEAD=$DEAD_FRAMES; BANNER=" OUCH! "; BANNER_T=$DEAD_FRAMES
+    DEAD=$DEAD_FRAMES; BANNER=" OUCH! "; BANNER_T=$DEAD_FRAMES; drop_carried
     ((LIVES == 0)) && pend_over=1
   else
     BANNER=" A KITTEN IS LOST! "; BANNER_T=34
@@ -452,6 +454,7 @@ autopilot() {
     if ((d < bd)); then bd=$d; tx=${KX[i]}; ty=${KY[i]}; fi
   done
   ((frame % 300 == 299)) && handle_key x
+  if ((CARRY >= 0)); then tx=$((cx)); ty=$((GROUND - 6)); fi
   [[ -z $tx ]] && return
   wd "$tx" "$cx"; dd=$WDV
   if ((dd > 12)); then handle_key $'\e[C'; elif ((dd < -12)); then handle_key $'\e[D'; fi
@@ -545,15 +548,27 @@ update_mice() {
 }
 
 # ---- falling kittens: catch them with the cat, or they land (or splat) ----
+drop_carried() {  # the kitten the cat carries falls (the cat got bitten)
+  ((CARRY >= 0)) || return 0
+  KS[CARRY]=2; KV[CARRY]=0; KF[CARRY]=${KY[CARRY]}; ev "kitten $CARRY dropped"; CARRY=-1
+}
+
 update_kittens() {
   local i step adx cxw=$((px8 >> 3))
+  if ((CARRY >= 0)); then                      # the cat is carrying a kitten: it hangs under the cat
+    KX[CARRY]=$((cxw + 1)); KY[CARRY]=$((catY + 5))
+    if ((catY >= GROUND - 12)); then           # low enough: set it down, safe and sound
+      KS[CARRY]=0; KY[CARRY]=$((GROUND - 6)); SCORE=$((SCORE + 500)); RESCUED=$((RESCUED + 1)); ev "kitten $CARRY delivered"; CARRY=-1
+    fi
+  fi
   for ((i = 0; i < NK; i++)); do
     ((KS[i] == 2)) || continue
     step=$((1 + KV[i] / 6)); ((step > 3)) && step=3
     KY[i]=$((KY[i] + step)); KV[i]=$((KV[i] + 1))
     wd $((KX[i] + 4)) $((cxw + 4)); adx=${WDV#-}
-    if ((adx < 8 && KY[i] - catY < 7 && catY - KY[i] < 7)); then
-      KS[i]=0; KY[i]=$((GROUND - 6)); SCORE=$((SCORE + 500)); RESCUED=$((RESCUED + 1)); ev "kitten $i caught"
+    if ((CARRY < 0 && adx < 10 && KY[i] - catY < 8 && catY - KY[i] < 8)); then   # caught: it rides with the cat
+      KS[i]=4; CARRY=$i; SCORE=$((SCORE + 500)); ev "kitten $i caught"
+      KX[i]=$((cxw + 1)); KY[i]=$((catY + 5))
       continue
     fi
     if ((KY[i] >= GROUND - 6)); then
@@ -660,7 +675,7 @@ radar() {
   for ((i = 0; i < ${#RX[@]}; i++)); do rplot "${RX[i]}" $((RAT_G - RO[i])) 137; done
   for ((i = 0; i < ${#BX[@]}; i++)); do rplot "${BX[i]}" "${BY[i]}" 117; done
   for ((i = 0; i < NK; i++)); do
-    case ${KS[i]} in 0) c=211;; 1) c=196; ((blink)) && c=203;; 2) c=226;; *) continue;; esac
+    case ${KS[i]} in 0) c=211;; 1) c=196; ((blink)) && c=203;; 2) c=226;; 4) c=219;; *) continue;; esac
     rplot "${KX[i]}" "${KY[i]}" "$c"
   done
   y=$((3 + (catY - TOP) * (RB - 4) / (GROUND - TOP))); ((y < 3)) && y=3; ((y > RB - 2)) && y=$((RB - 2))   # the cat, at its height

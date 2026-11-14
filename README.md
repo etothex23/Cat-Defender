@@ -7,7 +7,7 @@ A Defender-style shooter in Bash. You are a small orange tabby cat.
 - **Spazz-out** (X) is your smart bomb: the cat freaks out and pops every mouse on screen. You get 3.
 - **Lives:** 3. Losing a kitten (splat or carried off) costs one. Bonus life every 5000 points.
 - **Mice** run to a kitten, grab it, and float off on a balloon. Pop them with a swipe.
-- **Kittens** are the people to rescue. If you pop the mouse, the kitten drops: catch it with the cat before it hits the ground, or it lands safely if the drop is short.
+- **Kittens** are the people to rescue. Pop a mouse and its kitten drops. Fly into the falling kitten to **catch it** (500 points): it hangs under the cat. Fly low to the street and the cat sets it down safely (another 500 and it counts as saved). One kitten at a time; a bite makes you drop it. A kitten that falls too far and isn't caught is lost.
 - The street (cardboard boxes, trash cans) is the mountain range.
 - **Pigeons** home in on the cat. A hit costs a life (then you blink, safe, for 2 seconds). Pop them with a biscuit for 250.
 - **Rats** run the street on a pattern, jump, turn around and bite if you fly low. Biscuit them for 200. They follow patterns you can edit (see below).
