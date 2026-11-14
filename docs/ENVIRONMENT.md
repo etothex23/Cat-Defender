@@ -2,7 +2,7 @@
 
 ## Requirements
 - Bash 4+ (developed on 5.3). macOS ships 3.2, which is too old.
-- UTF-8 terminal with 256-colour (or truecolor) ANSI, at least 120x30.
+- UTF-8 terminal with 256-colour (or truecolor) ANSI. Ideal 120x30; it shrinks to fit down to 40x20 (`screen` in settings.conf). Phones: see TERMUX.md.
 - Rendering uses half-block characters (▀ ▄ █) as colour "pixels".
 
 ## Changes made to this machine (2026-11-13)

@@ -24,6 +24,7 @@ fi
 
 mkdir -p "$APP" "$PREFIX/bin"
 cp -R "$SRC/bin" "$SRC/src" "$SRC/sprites" "$APP/"
+[ -e "$APP/settings.conf" ] || cp "$SRC/settings.conf" "$APP/settings.conf"   # keep your edits on re-install
 ln -sf "$APP/bin/cat-defender" "$PREFIX/bin/cat-defender"
 ln -sf "$APP/bin/cat-defender" "$PREFIX/bin/meowtron"
 echo "Installed to $APP"

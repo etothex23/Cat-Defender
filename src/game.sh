@@ -19,7 +19,8 @@ W=120            # screen width in catxels / columns
 CH=30            # screen height in terminal rows
 H=$((CH * 2))    # screen height in catxels (60)
 WW=1200          # world width in catxels (wraps around)
-GROUND=54        # first catxel row of the sidewalk
+GROUND=54        # first catxel row of the sidewalk (set from the screen size)
+RB=11            # bottom border row of the radar panel (11 = tall radar, 7 = compact)
 TOP=14           # top of the play area (rows above it belong to the radar)
 SKY=17
 FRAME_US=50000   # 20 frames per second
@@ -75,8 +76,8 @@ init_sky() {
   local i x y
   for ((i = 0; i < W * H; i++)); do sky[i]=$SKY; done
   RANDOM=7
-  for ((i = 0; i < 34; i++)); do           # stars
-    x=$((RANDOM % W)); y=$((3 + RANDOM % 40))
+  for ((i = 0; i < W * H / 210; i++)); do  # stars
+    x=$((RANDOM % W)); y=$((3 + RANDOM % (GROUND - 12)))
     sky[y * W + x]=$((RANDOM % 2 ? 250 : 244))
   done
   for ((y = GROUND; y < H; y++)); do       # street: sidewalk, curb, asphalt
@@ -364,16 +365,16 @@ update_birds() {
 
 handle_key() {
   case $1 in
-    $'\e[C'|d)
+    $'\e[C'|$'\eOC'|d)
       if ((frame - lastR > REPEAT_GAP)); then vx=$((vx + BURST)); push_dir=1; push_left=$PUSH_FRAMES
       else vx=$((vx + ACC)); fi
       lastR=$frame; moved=1; face=1 ;;
-    $'\e[D'|a)
+    $'\e[D'|$'\eOD'|a)
       if ((frame - lastL > REPEAT_GAP)); then vx=$((vx - BURST)); push_dir=-1; push_left=$PUSH_FRAMES
       else vx=$((vx - ACC)); fi
       lastL=$frame; moved=1; face=-1 ;;
-    $'\e[A'|w) catY8=$((catY8 - 16)); frozen=1 ;;
-    $'\e[B'|s) catY8=$((catY8 + 16)); frozen=1 ;;
+    $'\e[A'|$'\eOA'|w) catY8=$((catY8 - 16)); frozen=1 ;;
+    $'\e[B'|$'\eOB'|s) catY8=$((catY8 + 16)); frozen=1 ;;
     ' ') fire=1 ;;
     x|X|b|B) bomb=1 ;;
     m|M) SOUND=$((1 - SOUND)); write_setting sound "$( ((SOUND)) && echo on || echo off )"; ((SOUND)) && sfx Pop ;;
@@ -560,36 +561,36 @@ update() {
   spaz_now=0; ((SPAZ > 0)) && SPAZ=$((SPAZ - 1))
   update_kittens
   if ((SCORE >= EXTRA_AT)); then LIVES=$((LIVES + 1)); EXTRA_AT=$((EXTRA_AT + EXTRA_STEP)); ev "bonus life"; fi
-  local tgt=$((px8 - (face > 0 ? 25 : 70) * 8))
+  local tgt=$((px8 - (face > 0 ? W * 5 / 24 : W * 7 / 12) * 8))
   cam8=$((cam8 + (tgt - cam8) / 6))
   if ((px8 >= WW * 8)); then px8=$((px8 - WW * 8)); cam8=$((cam8 - WW * 8)); fi
   if ((px8 < 0));       then px8=$((px8 + WW * 8)); cam8=$((cam8 + WW * 8)); fi
 }
 
 # ---- radar: the whole wrapping world as a strip across the top (rows 2-7) ----
-RDW=80; RDX0=$(((W - RDW) / 2)); RADAR=1
+RDW=80; RDX0=$(((W - RDW) / 2)); RADAR=1   # (set again by fit_screen)
 bake_radar() {   # the static part: panel, frame and the street furniture
   ((RADAR)) || return 0
   local x y i
-  for ((y = 2; y <= 11; y++)); do
+  for ((y = 2; y <= RB; y++)); do
     for ((x = RDX0 - 1; x <= RDX0 + RDW; x++)); do
-      if ((y == 2 || y == 11 || x == RDX0 - 1 || x == RDX0 + RDW)); then sky[y * W + x]=238; else sky[y * W + x]=233; fi
+      if ((y == 2 || y == RB || x == RDX0 - 1 || x == RDX0 + RDW)); then sky[y * W + x]=238; else sky[y * W + x]=233; fi
     done
   done
-  for ((i = 0; i < ${#OX[@]}; i++)); do x=$((RDX0 + OX[i] * RDW / WW)); sky[10 * W + x]=240; done
+  for ((i = 0; i < ${#OX[@]}; i++)); do x=$((RDX0 + OX[i] * RDW / WW)); sky[(RB - 1) * W + x]=240; done
 }
 rplot() {  # world-x, world-y, colour: a 1x2 dot at the matching height in the strip
-  local x=$((RDX0 + ((($1 % WW) + WW) % WW) * RDW / WW)) y=$((3 + ($2 - TOP) * 7 / (GROUND - TOP)))
-  ((y < 3)) && y=3; ((y > 9)) && y=9
+  local x=$((RDX0 + ((($1 % WW) + WW) % WW) * RDW / WW)) y=$((3 + ($2 - TOP) * (RB - 4) / (GROUND - TOP)))
+  ((y < 3)) && y=3; ((y > RB - 2)) && y=$((RB - 2))
   fb[y * W + x]=$3; fb[(y + 1) * W + x]=$3
 }
 radar() {
   ((RADAR)) || return 0
   local i k x y v c cx=$((px8 >> 3)) blink=$((frame / 3 % 2))
-  for ((k = 1; k <= 5; k++)); do rd[k]=1; done
+  for ((k = 1; k <= RB / 2; k++)); do rd[k]=1; done
   v=$(( ((cam8 >> 3) % WW + WW) % WW * RDW / WW ))      # your view, as a bright bracket
-  for ((k = 0; k <= W * RDW / WW; k++)); do x=$((RDX0 + (v + k) % RDW)); fb[2 * W + x]=252; fb[11 * W + x]=252; done
-  x=$((RDX0 + cx * RDW / WW)); for ((k = 3; k <= 10; k++)); do fb[k * W + x]=94; done   # a dim line down from you
+  for ((k = 0; k <= W * RDW / WW; k++)); do x=$((RDX0 + (v + k) % RDW)); fb[2 * W + x]=252; fb[RB * W + x]=252; done
+  x=$((RDX0 + cx * RDW / WW)); for ((k = 3; k < RB; k++)); do fb[k * W + x]=94; done   # a dim line down from you
   for ((i = 0; i < ${#MX[@]}; i++)); do c=250; ((MS[i] == 1 && blink)) && c=231; rplot "${MX[i]}" "${MY[i]}" "$c"; done
   for ((i = 0; i < ${#RX[@]}; i++)); do rplot "${RX[i]}" $((RAT_G - RO[i])) 137; done
   for ((i = 0; i < ${#BX[@]}; i++)); do rplot "${BX[i]}" "${BY[i]}" 117; done
@@ -597,7 +598,7 @@ radar() {
     case ${KS[i]} in 0) c=211;; 1) c=196; ((blink)) && c=203;; 2) c=226;; *) continue;; esac
     rplot "${KX[i]}" "${KY[i]}" "$c"
   done
-  y=$((3 + (catY - TOP) * 7 / (GROUND - TOP))); ((y < 3)) && y=3; ((y > 9)) && y=9   # the cat, at its height
+  y=$((3 + (catY - TOP) * (RB - 4) / (GROUND - TOP))); ((y < 3)) && y=3; ((y > RB - 2)) && y=$((RB - 2))   # the cat, at its height
   fb[y * W + x]=208; fb[y * W + x + 1]=208; fb[(y + 1) * W + x]=208; fb[(y + 1) * W + x + 1]=208
 }
 
@@ -606,7 +607,7 @@ compose() {
   fb=("${sky[@]}"); rd=("${ZERO[@]}")
   # street markings scroll with the world
   for ((x = 0; x < W; x++)); do
-    ((((x + camx) % 20) < 9)) && fb[58 * W + x]=220
+    ((((x + camx) % 20) < 9)) && fb[(H - 2) * W + x]=220
     ((((x + camx) % 40) == 0)) && fb[(GROUND + 1) * W + x]=240
   done
   # terrain
@@ -678,7 +679,7 @@ render() {
   local out='' cy cx i top bot ci last=-9 cur_t=-1 cur_b=-1 alive=0 hud
   for ((cy = 1; cy < CH; cy++)); do
     # sky rows are static unless a sprite is (or just was) on them; rows 20+ hold the street
-    if ((frame > 0 && cy < 20 && !rd[cy] && !prd[cy])); then continue; fi
+    if ((frame > 0 && cy < GROUND / 2 && !rd[cy] && !prd[cy])); then continue; fi
     for ((cx = 0; cx < W; cx++)); do
       i=$((2 * cy * W + cx)); top=${fb[i]}; bot=${fb[i + W]}
       ci=$((cy * W + cx))
@@ -693,13 +694,23 @@ render() {
   if ((frame % 4 == 0)); then
     for ((i = 0; i < NK; i++)); do ((KS[i] != 3)) && ((alive++)); done
     out+=$'\e['$ORIGY';'$ORIGX'H\e[0;97;48;5;236m'
-    if ((over)); then
+    local snd=off dtag=${DIFF^^}; ((SOUND)) && snd=on
+    if ((W < 60)); then            # phone-sized
+      if ((over)); then printf -v hud ' GAME OVER %d  q quit' "$SCORE"
+      elif ((alive == 0)); then printf -v hud ' ALL GONE %d  q quit' "$SCORE"
+      else printf -v hud ' %s %d  L%d Z%d K%d S%d M:%s' "${dtag:0:3}" "$SCORE" "$LIVES" "$BOMBS" "$alive" "$RESCUED" "$snd"; fi
+    elif ((W < 120)); then
+      if ((over)); then printf -v hud ' MEOWTRON  SCORE %d  GAME OVER - SAVED %d  press q ' "$SCORE" "$RESCUED"
+      elif ((alive == 0)); then printf -v hud ' MEOWTRON  SCORE %d  ALL THE KITTENS ARE GONE  press q ' "$SCORE"
+      else printf -v hud ' MEOWTRON [%s]  SCORE %d  LIVES %d  SPAZZ %d  KITTENS %d/%d  SAVED %d  M %s' "${DIFF^^}" "$SCORE" "$LIVES" "$BOMBS" "$alive" "$NK" "$RESCUED" "$snd"; fi
+    elif ((over)); then
       printf -v hud ' MEOWTRON   SCORE %6d   GAME OVER - SAVED %d kitten(s)   press q ' "$SCORE" "$RESCUED"
     elif ((alive == 0)); then
       printf -v hud ' MEOWTRON   SCORE %6d   ALL THE KITTENS ARE GONE...   press q ' "$SCORE"
     else
-      printf -v hud ' MEOWTRON [%s]  SCORE %6d  LIVES %d  SPAZZ %d  KITTENS %d/%d  SAVED %d  SPACE throw  X spazz  M sound %s  q quit' "${DIFF^^}" "$SCORE" "$LIVES" "$BOMBS" "$alive" "$NK" "$RESCUED" "$( ((SOUND)) && echo on || echo off )"
+      printf -v hud ' MEOWTRON [%s]  SCORE %6d  LIVES %d  SPAZZ %d  KITTENS %d/%d  SAVED %d  SPACE throw  X spazz  M sound %s  q quit' "${DIFF^^}" "$SCORE" "$LIVES" "$BOMBS" "$alive" "$NK" "$RESCUED" "$snd"
     fi
+    hud=${hud:0:W}
     printf -v hud "%-${W}s" "$hud"
     out+=$hud
   fi
@@ -707,14 +718,26 @@ render() {
 }
 
 # ---- setup / teardown ----
-setup_tty() {
-  local cols rows
-  cols=$(tput cols); rows=$(tput lines)
-  if ((cols < W || rows < CH)); then
-    echo "Terminal is ${cols}x${rows}; Meowtron needs at least ${W}x${CH}. Enlarge the window." >&2
+# Screen size: `screen = auto` fits the terminal (up to 120x30, down to 40x20); `screen = 80x24` forces one.
+fit_screen() {  # terminal-cols terminal-rows (empty when headless)
+  local want=${SCREEN:-${CFG[.screen]:-auto}} cols=$1 rows=$2 w=120 ch=30
+  want=${want,,}
+  if [[ $want =~ ^([0-9]+)x([0-9]+)$ ]]; then w=${BASH_REMATCH[1]}; ch=${BASH_REMATCH[2]}
+  elif [[ -n $cols ]]; then w=$((cols < 120 ? cols : 120)); ch=$((rows < 30 ? rows : 30)); fi
+  ((w < 40)) && w=40; ((ch < 20)) && ch=20
+  if [[ -n $cols ]] && ((cols < w || rows < ch)); then
+    echo "Terminal is ${cols}x${rows}; Meowtron needs at least ${w}x${ch} (40x20 is the smallest). Enlarge the window or shrink the font." >&2
     exit 1
   fi
-  ORIGX=$(( (cols - W) / 2 + 1 )); ORIGY=$(( (rows - CH) / 2 ))
+  W=$w; CH=$ch; H=$((CH * 2)); GROUND=$((H - 6)); RAT_G=$((GROUND - 5))
+  RDW=$((W - 4 < 80 ? W - 4 : 80)); RDX0=$(((W - RDW) / 2))
+  if ((CH < 26)); then RB=7; else RB=11; fi          # compact radar on small screens
+  TOP=$((RB + 3))
+  ((catY8 > (GROUND - 8) * 8)) && catY8=$(((GROUND - 8) * 8)); catY=$((catY8 >> 3))
+}
+
+setup_tty() {
+  ORIGX=$(( (TCOLS - W) / 2 + 1 )); ORIGY=$(( (TROWS - CH) / 2 ))
   STTY_ORIG=$(stty -g)
   stty -echo -icanon
   printf '\e[?1049h\e[?25l\e[?7l\e[2J'
@@ -727,23 +750,23 @@ trap cleanup EXIT
 
 # ---- title / settings page: pick a difficulty ----
 title_screen() {
-  local names=(easy medium hard) blurb=("5 lives, slow rats, few pests" "3 lives, the way it was meant" "2 lives, fast rats, lots of pests") idx=1 i k r row col out opt
+  local b=$(( (CH - 18) / 2 )) names=(easy medium hard) blurb=("5 lives, slow rats, few pests" "3 lives, the way it was meant" "2 lives, fast rats, lots of pests") idx=1 i k r row col out opt
   for i in 0 1 2; do [[ ${names[i]} == "$DIFF" ]] && idx=$i; done
   while :; do
     out=$'\e[0m\e[2J'
-    at() { out+=$'\e['$((ORIGY + $1))';'$((ORIGX + W / 2 - ${#3} / 2))'H'$2$3$'\e[0m'; }
-    at 6  $'\e[1;38;5;208m' "M E O W T R O N"
-    at 8  $'\e[38;5;250m' "a small cat. six kittens. too many mice."
-    at 12 $'\e[38;5;252m' "D I F F I C U L T Y"
+    at() { local t=${3:0:W}; out+=$'\e['$((ORIGY + b + $1))';'$((ORIGX + (W - ${#t}) / 2))'H'$2$t$'\e[0m'; }
+    at 0  $'\e[1;38;5;208m' "M E O W T R O N"
+    at 2  $'\e[38;5;250m' "a small cat. six kittens. too many mice."
+    at 6  $'\e[38;5;252m' "D I F F I C U L T Y"
     opt=''
     for i in 0 1 2; do
       if ((i == idx)); then opt+=$'\e[1;30;48;5;208m  '${names[i]^^}$'  \e[0m   '; else opt+=$'\e[38;5;245m  '${names[i]}$'  \e[0m   '; fi
     done
-    out+=$'\e['$((ORIGY + 14))';'$((ORIGX + W / 2 - 17))'H'$opt
-    at 16 $'\e[38;5;245m' "${blurb[idx]}"
-    at 18 $'\e[38;5;252m' "M  sound: $( ((SOUND)) && echo ON || echo off )"
-    at 20 $'\e[38;5;252m' "LEFT / RIGHT choose     ENTER play     Q quit"
-    at 22 $'\e[38;5;240m' "rat patterns and every number live in settings.conf"
+    out+=$'\e['$((ORIGY + b + 8))';'$((ORIGX + (W - 28) / 2))'H'$opt
+    at 10 $'\e[38;5;245m' "${blurb[idx]}"
+    at 12 $'\e[38;5;252m' "M  sound: $( ((SOUND)) && echo ON || echo off )"
+    at 14 $'\e[38;5;252m' "$( ((W < 50)) && echo "< > pick   ENTER play   Q quit" || echo "LEFT / RIGHT choose     ENTER play     Q quit" )"
+    at 16 $'\e[38;5;240m' "$( ((W < 56)) || echo "rat patterns and every number live in settings.conf" )"
     printf '%s' "$out"
     IFS= read -rsn1 k || { quit=1; return; }
     if [[ $k == $'\e' ]]; then IFS= read -rsn2 -t 0.05 r; k+=$r; fi
@@ -762,12 +785,17 @@ title_screen() {
 
 # ---- main ----
 load_settings; apply_settings
+TCOLS=; TROWS=
+if [[ $MODE == play ]]; then
+  [[ -t 0 && -t 1 ]] || { echo "Run this in a real terminal." >&2; exit 1; }
+  TCOLS=$(tput cols); TROWS=$(tput lines)
+fi
+fit_screen "$TCOLS" "$TROWS"
 init_sky; gen_world; gen_kittens
 pfb=(); for ((i = 0; i < W * H; i++)); do pfb[i]=-1; done
 rd=("${ZERO[@]}"); prd=("${ZERO[@]}")
 
 if [[ $MODE == play ]]; then
-  [[ -t 0 && -t 1 ]] || { echo "Run this in a real terminal." >&2; exit 1; }
   setup_tty
   title_screen
   ((quit)) && exit 0

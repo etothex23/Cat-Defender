@@ -25,7 +25,7 @@ A Defender-style shooter in Bash. You are a small orange tabby cat.
 bin/meowtron          # or bin/cat-defender
 ```
 Arrows or WASD fly. Space throws a biscuit. X spazz-out. M toggles sound. q quits.
-Needs Bash 4+ and a 120x30 UTF-8 colour terminal. See docs/ENVIRONMENT.md. Check your terminal: `tools/termcheck.sh`
+Needs Bash 4+ and a UTF-8 256-colour terminal. 120x30 is ideal; it shrinks to fit down to 40x20 (phones: see docs/TERMUX.md). See docs/ENVIRONMENT.md. Check your terminal: `tools/termcheck.sh`
 
 ## Develop
 - `tests/run_checks.sh`: syntax, speed and a "no ghost pixels" replay test.
