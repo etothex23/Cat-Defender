@@ -25,8 +25,9 @@ TOP=14           # top of the play area (rows above it belong to the radar)
 SKY=17
 FRAME_US=50000   # 20 frames per second
 
-MODE=play; BENCH_FRAMES=0; SNAP_FILE=
+MODE=play; BENCH_FRAMES=0; SNAP_FILE=; SKIP_TITLE=0
 case ${1:-} in
+  --again)    SKIP_TITLE=1 ;;
   --bench)    MODE=bench; BENCH_FRAMES=${2:-200} ;;
   --snapshot) MODE=snap;  BENCH_FRAMES=${2:-90}; SNAP_FILE=${3:-${2:?need a file}}
               [[ ${2:-} =~ ^[0-9]+$ ]] || BENCH_FRAMES=90 ;;
@@ -106,25 +107,46 @@ blit() {  # sprite x y
 # Signed shortest distance a-b around the wrapping world, into WDV.
 wd() { WDV=$(( ($1 - $2) % WW + WW + WW / 2 )); WDV=$(( WDV % WW - WW / 2 )); }
 
-SOUND=0; SFX_LAST=0
-# Sound effects: macOS system sounds through afplay (anything else gets the terminal bell for the big moments).
+SOUND=0; SFX_LAST=0; SFX_PLAYER=
+# Sound effects: the WAVs in sounds/ (made by tools/make_sounds.py), played by whatever the machine has:
+# afplay (macOS), paplay/aplay (Linux), play-audio or termux-media-player (Termux), mpv, ffplay.
 # Only in real play (never in headless tests). Toggle with M, or `sound = on|off` in settings.conf.
-sfx() {  # name [volume]
-  local f=/System/Library/Sounds/$1.aiff now=${EPOCHREALTIME/./}
+sfx_detect() {
+  local p
+  for p in afplay paplay aplay play-audio termux-media-player mpv ffplay; do
+    command -v "$p" >/dev/null 2>&1 && { SFX_PLAYER=$p; return 0; }
+  done
+  return 0
+}
+sfx() {  # name [volume 0-1, afplay only]
+  local f=$ROOT/sounds/$1.wav now=${EPOCHREALTIME/./}
   ((now - SFX_LAST < 60000)) && return 0          # no more than ~16 sounds a second
   SFX_LAST=$now
-  if [[ -r $f ]] && command -v afplay >/dev/null 2>&1; then { afplay -v "${2:-0.5}" "$f" >/dev/null 2>&1 & } 2>/dev/null
-  else case $1 in Basso|Sosumi|Submarine|Hero) printf '\a' ;; esac; fi
+  if [[ -z $SFX_PLAYER || ! -r $f ]]; then
+    case $1 in hit|over|spazz|bonus) printf '\a' ;; esac; return 0
+  fi
+  case $SFX_PLAYER in
+    afplay)  { afplay -v "${2:-0.6}" "$f" >/dev/null 2>&1 & } 2>/dev/null ;;
+    paplay)  { paplay "$f" >/dev/null 2>&1 & } 2>/dev/null ;;
+    aplay)   { aplay -q "$f" >/dev/null 2>&1 & } 2>/dev/null ;;
+    play-audio) { play-audio "$f" >/dev/null 2>&1 & } 2>/dev/null ;;
+    termux-media-player) { termux-media-player play "$f" >/dev/null 2>&1 & } 2>/dev/null ;;
+    mpv)     { mpv --really-quiet --no-video "$f" >/dev/null 2>&1 & } 2>/dev/null ;;
+    ffplay)  { ffplay -nodisp -autoexit -loglevel quiet "$f" >/dev/null 2>&1 & } 2>/dev/null ;;
+  esac
 }
 sfx_for() {
   case $1 in
-    "mouse popped"|"mouse spazzed"|"bird popped"|"rat popped") sfx Pop ;;
-    "life lost (0 left)") sfx Sosumi 0.7 ;;
-    "life lost"*) sfx Basso 0.7 ;;
-    "kitten "*" caught") sfx Glass ;;
-    "kitten "*" landed safely") sfx Tink 0.4 ;;
-    "SPAZZ-OUT") sfx Submarine 0.7 ;;
-    "bonus life") sfx Hero 0.6 ;;
+    "throw") sfx throw 0.35 ;;
+    "mouse popped"|"mouse spazzed"|"bird popped"|"rat popped") sfx pop ;;
+    "life lost (0 left)"*) sfx over ;;
+    "life lost"*bite) sfx hit ;;
+    "life lost"*kitten) sfx lost ;;
+    "kitten "*" caught") sfx rescue ;;
+    "kitten "*" landed safely") sfx land 0.5 ;;
+    "SPAZZ-OUT") sfx spazz ;;
+    "bonus life") sfx bonus ;;
+    "respawn") sfx respawn ;;
   esac
 }
 ev() { ((SOUND)) && [[ $MODE == play ]] && sfx_for "$*"; [[ -n ${TRACE:-} ]] && echo "[f$frame] $*" >&2; return 0; }
@@ -171,6 +193,7 @@ apply_settings() {
   cfgn jump_height 14;      JUMP_H=$CV
   d=${CFG[.radar]:-on}; d=${d,,}; RADAR=1; [[ $d == off || $d == 0 || $d == no ]] && RADAR=0
   d=${CFG[.sound]:-on}; d=${d,,}; SOUND=1; [[ $d == off || $d == 0 || $d == no ]] && SOUND=0
+  d=${CFG[.info]:-off}; d=${d,,}; INFO=0; [[ $d == on || $d == 1 || $d == yes ]] && INFO=1
   ((SPAWN_EVERY < 1)) && SPAWN_EVERY=1; ((BIRD_EVERY < 1)) && BIRD_EVERY=1; ((RAT_EVERY < 1)) && RAT_EVERY=1
   PATS=()
   while [[ -n ${CFG[.pattern$n]:-} ]]; do
@@ -231,7 +254,21 @@ SCORE=0; LOST=0; RESCUED=0
 LIVES=3; BOMBS=3; EXTRA_AT=5000; EXTRA_STEP=5000      # lives: a lost kitten costs one; a bonus life every EXTRA_AT points
 SPAZ=0; SPAZ_FRAMES=12; bomb=0; spaz_now=0; over=0   # spazz-out smart bomb
 declare -a RING_X=(8 7 4 0 -4 -7 -8 -7 -4 0 4 7) RING_Y=(0 4 7 8 7 4 0 -4 -7 -8 -7 -4)
-lose_life() { ((LIVES > 0)) && LIVES=$((LIVES - 1)); ((LIVES == 0)) && over=1; ev "life lost ($LIVES left)"; }
+DEAD=0; DEAD_FRAMES=36; pend_over=0; gone=0; restart=0; BANNER=; BANNER_T=0; banner_clear=0; BCY=10
+INFO=0; FRAME_MS=0; RSS_MB=0
+set_over() { over=1; BANNER=" GAME OVER   R play again   Q quit "; BANNER_T=1000000; }
+lose_life() {  # bite = the cat dies and reappears; anything else (a lost kitten) just costs a life
+  local why=${1:-kitten}
+  ((LIVES > 0)) && LIVES=$((LIVES - 1))
+  ev "life lost ($LIVES left) $why"
+  if [[ $why == bite ]]; then
+    DEAD=$DEAD_FRAMES; BANNER=" OUCH! "; BANNER_T=$DEAD_FRAMES
+    ((LIVES == 0)) && pend_over=1
+  else
+    BANNER=" A KITTEN IS LOST! "; BANNER_T=34
+    ((LIVES == 0)) && set_over
+  fi
+}
 
 # ---- movement tuning. Unit: 1 catxel = 1 sprite pixel = 1 terminal column wide.
 # Speeds are stored in 1/8 catxel per frame (the game runs 20 frames/s).
@@ -313,7 +350,7 @@ update_rats() {
     if ((!alive)); then SCORE=$((SCORE + 200)); ev "rat popped"; continue; fi
     wd $((cx + 4)) $((x + 5)); dx=${WDV#-}
     if ((inv == 0 && dx < 8 && ry + 5 > catY && ry < catY + 6)); then
-      lose_life; inv=$INVULN; ev "rat bit the cat"; continue
+      lose_life bite; inv=$INVULN; ev "rat bit the cat"; continue
     fi
     nx+=("$x"); no+=("$o"); nd+=("${RD[i]}"); np+=("${RP[i]}"); ni+=("${RI[i]}"); nt+=("${RT[i]}"); na+=("${RA[i]}")
   done
@@ -356,7 +393,7 @@ update_birds() {
     ((y < TOP)) && y=$TOP; ((y > GROUND - 8)) && y=$((GROUND - 8))
     wd "$cx" "$x"; dx=${WDV#-}
     if ((inv == 0 && dx < 8 && y - catY < 5 && catY - y < 5)); then   # it got the cat
-      lose_life; inv=$INVULN; ev "bird hit the cat"; continue
+      lose_life bite; inv=$INVULN; ev "bird hit the cat"; continue
     fi
     nx+=("$x"); ny+=("$y"); nd+=("$d")
   done
@@ -377,6 +414,8 @@ handle_key() {
     $'\e[B'|$'\eOB'|s) catY8=$((catY8 + 16)); frozen=1 ;;
     ' ') fire=1 ;;
     x|X|b|B) bomb=1 ;;
+    r|R) ((over)) && restart=1 ;;
+    i|I) INFO=$((1 - INFO)) ;;
     m|M) SOUND=$((1 - SOUND)); write_setting sound "$( ((SOUND)) && echo on || echo off )"; ((SOUND)) && sfx Pop ;;
     q|Q) quit=1 ;;
   esac
@@ -525,8 +564,32 @@ update_kittens() {
   done
 }
 
+respawn() {  # the cat reappears in mid-air, calm, safe for a moment, with the neighbourhood cleared
+  local cx=$((px8 >> 3)) i d
+  local -a nx=() ny=() nd=() no=() np=() ni=() nt=() na=()
+  vx=0; push_left=0; catY8=$(( (TOP + (GROUND - TOP) / 3) * 8 )); catY=$((catY8 >> 3)); inv=60
+  for ((i = 0; i < ${#BX[@]}; i++)); do wd "${BX[i]}" "$cx"; d=${WDV#-}; ((d >= 60)) && { nx+=("${BX[i]}"); ny+=("${BY[i]}"); nd+=("${BD[i]}"); }; done
+  BX=("${nx[@]}"); BY=("${ny[@]}"); BD=("${nd[@]}")
+  nx=(); ny=(); nd=()
+  for ((i = 0; i < ${#RX[@]}; i++)); do
+    wd "${RX[i]}" "$cx"; d=${WDV#-}
+    ((d >= 60)) && { nx+=("${RX[i]}"); no+=("${RO[i]}"); nd+=("${RD[i]}"); np+=("${RP[i]}"); ni+=("${RI[i]}"); nt+=("${RT[i]}"); na+=("${RA[i]}"); }
+  done
+  RX=("${nx[@]}"); RO=("${no[@]}"); RD=("${nd[@]}"); RP=("${np[@]}"); RI=("${ni[@]}"); RT=("${nt[@]}"); RA=("${na[@]}")
+  SX=(); SY=(); SD=(); SL=()
+  ev "respawn"
+}
+
 update() {
+  if ((BANNER_T > 0)); then BANNER_T=$((BANNER_T - 1)); ((BANNER_T == 0)) && banner_clear=1; fi
   if ((over)); then fire=0; bomb=0; moved=0; frozen=0; return; fi
+  if ((DEAD > 0)); then                      # you died: everything holds still while the burst plays
+    fire=0; bomb=0; moved=0; frozen=0; DEAD=$((DEAD - 1))
+    if ((DEAD == 0)); then
+      if ((pend_over)); then pend_over=0; gone=1; set_over; else respawn; fi
+    fi
+    return
+  fi
   local av=$((vx < 0 ? -vx : vx))
   if ((push_left > 0)); then vx=$((vx + push_dir * PUSH)); ((push_left--)); fi
   if ((!moved && !frozen)); then           # no horizontal OR vertical key this frame: coast
@@ -560,6 +623,8 @@ update() {
   update_rats
   spaz_now=0; ((SPAZ > 0)) && SPAZ=$((SPAZ - 1))
   update_kittens
+  local ka=0 kk; for ((kk = 0; kk < NK; kk++)); do ((KS[kk] != 3)) && ka=1; done
+  ((ka == 0 && !over)) && { BANNER=" ALL THE KITTENS ARE GONE   R play again   Q quit "; set_over; BANNER=" ALL THE KITTENS ARE GONE   R play again   Q quit "; }
   if ((SCORE >= EXTRA_AT)); then LIVES=$((LIVES + 1)); EXTRA_AT=$((EXTRA_AT + EXTRA_STEP)); ev "bonus life"; fi
   local tgt=$((px8 - (face > 0 ? W * 5 / 24 : W * 7 / 12) * 8))
   cam8=$((cam8 + (tgt - cam8) / 6))
@@ -600,6 +665,18 @@ radar() {
   done
   y=$((3 + (catY - TOP) * (RB - 4) / (GROUND - TOP))); ((y < 3)) && y=3; ((y > RB - 2)) && y=$((RB - 2))   # the cat, at its height
   fb[y * W + x]=208; fb[y * W + x + 1]=208; fb[(y + 1) * W + x]=208; fb[(y + 1) * W + x + 1]=208
+}
+
+death_burst() {  # two expanding rings of sparks where the cat was
+  local cx=$(( $1 + 4 )) cy=$(( $2 + 3 )) t=$((DEAD_FRAMES - DEAD)) i k r rx ry c
+  for k in 1 2; do
+    r=$(( t * k / 3 + 2 ))
+    for ((i = 0; i < 12; i++)); do
+      rx=$((cx + RING_X[i] * r / 4)); ry=$((cy + RING_Y[i] * r / 8))
+      c=208; (( (t + i) % 3 == 0 )) && c=226; (( (t + i + k) % 5 == 0 )) && c=196
+      if ((rx >= 0 && rx < W - 1 && ry >= 0 && ry < H)); then fb[ry * W + rx]=$c; fb[ry * W + rx + 1]=$c; rd[ry >> 1]=1; fi
+    done
+  done
 }
 
 compose() {
@@ -669,7 +746,10 @@ compose() {
     done
     for ((y = cys - 20; y <= cys + 26; y += 2)); do ((y >= 0 && y < H)) && rd[y >> 1]=1; done
   fi
-  ((inv > 0 && frame % 4 < 2)) || blit "$sprite" "$cxs" "$cys"   # blinks while safe after a hit
+  if ((DEAD > 0)); then death_burst "$cxs" "$cys"
+  elif ((gone)); then :
+  elif ((inv > 0 && frame % 4 < 2)); then :   # blinks while safe after a hit
+  else blit "$sprite" "$cxs" "$cys"; fi
   radar
 }
 
@@ -696,43 +776,63 @@ render() {
     out+=$'\e['$ORIGY';'$ORIGX'H\e[0;97;48;5;236m'
     local snd=off dtag=${DIFF^^}; ((SOUND)) && snd=on
     if ((W < 60)); then            # phone-sized
-      if ((over)); then printf -v hud ' GAME OVER %d  q quit' "$SCORE"
-      elif ((alive == 0)); then printf -v hud ' ALL GONE %d  q quit' "$SCORE"
+      if ((over)); then printf -v hud ' GAME OVER %d  R again  Q quit' "$SCORE"
+      elif ((alive == 0)); then printf -v hud ' ALL GONE %d  R again  Q quit' "$SCORE"
       else printf -v hud ' %s %d  L%d Z%d K%d S%d M:%s' "${dtag:0:3}" "$SCORE" "$LIVES" "$BOMBS" "$alive" "$RESCUED" "$snd"; fi
     elif ((W < 120)); then
-      if ((over)); then printf -v hud ' MEOWTRON  SCORE %d  GAME OVER - SAVED %d  press q ' "$SCORE" "$RESCUED"
-      elif ((alive == 0)); then printf -v hud ' MEOWTRON  SCORE %d  ALL THE KITTENS ARE GONE  press q ' "$SCORE"
+      if ((over)); then printf -v hud ' MEOWTRON  SCORE %d  GAME OVER - SAVED %d  R again  Q quit' "$SCORE" "$RESCUED"
+      elif ((alive == 0)); then printf -v hud ' MEOWTRON  SCORE %d  ALL THE KITTENS ARE GONE  R again  Q quit' "$SCORE"
       else printf -v hud ' MEOWTRON [%s]  SCORE %d  LIVES %d  SPAZZ %d  KITTENS %d/%d  SAVED %d  M %s' "${DIFF^^}" "$SCORE" "$LIVES" "$BOMBS" "$alive" "$NK" "$RESCUED" "$snd"; fi
     elif ((over)); then
-      printf -v hud ' MEOWTRON   SCORE %6d   GAME OVER - SAVED %d kitten(s)   press q ' "$SCORE" "$RESCUED"
+      printf -v hud ' MEOWTRON   SCORE %6d   GAME OVER - SAVED %d kitten(s)   R play again   Q quit ' "$SCORE" "$RESCUED"
     elif ((alive == 0)); then
-      printf -v hud ' MEOWTRON   SCORE %6d   ALL THE KITTENS ARE GONE...   press q ' "$SCORE"
+      printf -v hud ' MEOWTRON   SCORE %6d   ALL THE KITTENS ARE GONE...   R play again   Q quit ' "$SCORE"
     else
       printf -v hud ' MEOWTRON [%s]  SCORE %6d  LIVES %d  SPAZZ %d  KITTENS %d/%d  SAVED %d  SPACE throw  X spazz  M sound %s  q quit' "${DIFF^^}" "$SCORE" "$LIVES" "$BOMBS" "$alive" "$NK" "$RESCUED" "$snd"
     fi
     hud=${hud:0:W}
+    if ((INFO)); then
+      ((frame % 20 == 0)) && rss_mb
+      printf -v info ' %dms %dMB ' "$FRAME_MS" "$RSS_MB"
+    fi
     printf -v hud "%-${W}s" "$hud"
+    ((INFO)) && hud=${hud:0:W-${#info}}$info
     out+=$hud
+  fi
+  if ((banner_clear)); then                 # the banner is gone: repaint the row it covered
+    banner_clear=0; rd[BCY]=1
+    for ((i = 0; i < W; i++)); do pfb[2 * BCY * W + i]=-1; pfb[(2 * BCY + 1) * W + i]=-1; done
+  fi
+  if ((BANNER_T > 0)); then
+    out+=$'\e['$((BCY + ORIGY))';'$((ORIGX + (W - ${#BANNER}) / 2))'H\e[1;97;41m'$BANNER$'\e[0m'
+    rd[BCY]=1
   fi
   printf '%s' "$out"
 }
+rss_mb() {  # resident memory of this game, in MB, into RSS_MB
+  local pg
+  if [[ -r /proc/$$/statm ]]; then read -r _ pg _ < /proc/$$/statm; RSS_MB=$((pg * PAGE_KB / 1024))
+  else RSS_MB=$(( $(ps -o rss= -p $$ 2>/dev/null || echo 0) / 1024 )); fi
+}
+PAGE_KB=$(( $(getconf PAGESIZE 2>/dev/null || echo 4096) / 1024 ))
 
 # ---- setup / teardown ----
-# Screen size: `screen = auto` fits the terminal (up to 120x30, down to 40x20); `screen = 80x24` forces one.
+# Screen size: `screen = auto` fits the terminal (up to 120x30, down to 40x18); `screen = 80x24` forces one.
 fit_screen() {  # terminal-cols terminal-rows (empty when headless)
   local want=${SCREEN:-${CFG[.screen]:-auto}} cols=$1 rows=$2 w=120 ch=30
   want=${want,,}
   if [[ $want =~ ^([0-9]+)x([0-9]+)$ ]]; then w=${BASH_REMATCH[1]}; ch=${BASH_REMATCH[2]}
   elif [[ -n $cols ]]; then w=$((cols < 120 ? cols : 120)); ch=$((rows < 30 ? rows : 30)); fi
-  ((w < 40)) && w=40; ((ch < 20)) && ch=20
+  ((w < 40)) && w=40; ((ch < 18)) && ch=18
   if [[ -n $cols ]] && ((cols < w || rows < ch)); then
-    echo "Terminal is ${cols}x${rows}; Meowtron needs at least ${w}x${ch} (40x20 is the smallest). Enlarge the window or shrink the font." >&2
+    echo "Terminal is ${cols}x${rows}; Meowtron needs at least ${w}x${ch} (40x18 is the smallest). Enlarge the window or shrink the font." >&2
     exit 1
   fi
   W=$w; CH=$ch; H=$((CH * 2)); GROUND=$((H - 6)); RAT_G=$((GROUND - 5))
   RDW=$((W - 4 < 80 ? W - 4 : 80)); RDX0=$(((W - RDW) / 2))
   if ((CH < 26)); then RB=7; else RB=11; fi          # compact radar on small screens
-  TOP=$((RB + 3))
+  TOP=$((RB + 3)); BCY=$(( (RB / 2 + 2 + GROUND / 2) / 2 ))
+  RISE_EVERY=$(( 85 / (GROUND - 6 - TOP - 5) )); ((RISE_EVERY < 2)) && RISE_EVERY=2; ((RISE_EVERY > 6)) && RISE_EVERY=6   # a carried kitten escapes in ~4 s at any height
   ((catY8 > (GROUND - 8) * 8)) && catY8=$(((GROUND - 8) * 8)); catY=$((catY8 >> 3))
 }
 
@@ -747,6 +847,13 @@ cleanup() {
   [[ -n ${TMPD:-} ]] && rm -rf "$TMPD"
 }
 trap cleanup EXIT
+do_restart() {  # play again from scratch: hand the terminal back, then start a fresh process (also frees all memory)
+  [[ $MODE == play ]] || { restart=0; return 0; }
+  printf '\e[0m\e[?7h\e[?25h\e[?1049l'; stty "$STTY_ORIG" 2>/dev/null
+  [[ -n ${TMPD:-} ]] && rm -rf "$TMPD"
+  trap - EXIT
+  exec "$BASH" "$ROOT/src/game.sh" --again
+}
 
 # ---- title / settings page: pick a difficulty ----
 title_screen() {
@@ -797,8 +904,9 @@ rd=("${ZERO[@]}"); prd=("${ZERO[@]}")
 
 if [[ $MODE == play ]]; then
   setup_tty
-  title_screen
+  ((SKIP_TITLE)) || title_screen
   ((quit)) && exit 0
+  ((SOUND)) && sfx_detect
   TMPD=$(mktemp -d); mkfifo "$TMPD/f"; exec {sfd}<>"$TMPD/f"
 fi
 
@@ -812,18 +920,20 @@ while ((!quit)); do
   compose
   if [[ $MODE == play ]]; then
     render
+    FRAME_MS=$(( (${EPOCHREALTIME/./} - t0) / 1000 ))
     rem=$((FRAME_US - (${EPOCHREALTIME/./} - t0)))
     if ((rem > 0)); then printf -v s '0.%06d' "$rem"; read -rt "$s" -u "$sfd" || true; fi
   else
     render >> "${RENDER_OUT:-/dev/null}"
   fi
+  ((restart)) && do_restart
   ((frame++))
   if [[ $MODE != play ]] && ((frame >= BENCH_FRAMES)); then break; fi
 done
 
 if [[ $MODE == bench ]]; then
   el=$(( ${EPOCHREALTIME/./} - t_start ))
-  echo "frames: $frame   avg: $((el / frame / 1000)).$(( (el / frame % 1000) / 100 )) ms/frame   (budget $((FRAME_US / 1000)) ms)   score: $SCORE  saved: $RESCUED  lost: $LOST  lives: $LIVES  spazz left: $BOMBS"
+  rss_mb; echo "frames: $frame   avg: $((el / frame / 1000)).$(( (el / frame % 1000) / 100 )) ms/frame   (budget $((FRAME_US / 1000)) ms)   score: $SCORE  saved: $RESCUED  lost: $LOST  lives: $LIVES  spazz left: $BOMBS  mem: ${RSS_MB} MB"
 elif [[ $MODE == snap ]]; then
   printf '%s\n' "${fb[*]}" > "$SNAP_FILE"
   echo "wrote $SNAP_FILE"
